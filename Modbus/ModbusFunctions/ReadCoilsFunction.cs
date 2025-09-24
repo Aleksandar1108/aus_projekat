@@ -24,15 +24,48 @@ namespace Modbus.ModbusFunctions
         /// <inheritdoc/>
         public override byte[] PackRequest()
         {
-            //TO DO: IMPLEMENT
-            throw new NotImplementedException();
+            var param = (ModbusReadCommandParameters)CommandParameters;
+
+            List<byte> request = new List<byte>();
+
+
+            request.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)param.TransactionId)));
+
+
+            request.AddRange(new byte[] { 0x00, 0x00 });
+
+
+            request.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)6)));
+
+
+            request.Add(param.UnitId);
+
+
+            request.Add(0x01);
+            request.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)param.StartAddress)));
+            request.AddRange(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)param.Quantity)));
+
+            return request.ToArray();
         }
 
         /// <inheritdoc />
         public override Dictionary<Tuple<PointType, ushort>, ushort> ParseResponse(byte[] response)
         {
-            //TO DO: IMPLEMENT
-            throw new NotImplementedException();
+            var result = new Dictionary<Tuple<PointType, ushort>, ushort>();
+            var param = (ModbusReadCommandParameters)CommandParameters;
+
+
+            int byteCount = response[8];
+            for (int i = 0; i < param.Quantity; i++)
+            {
+                int byteIndex = 9 + i / 8;
+                int bitIndex = i % 8;
+                bool coilState = (response[byteIndex] & (1 << bitIndex)) != 0;
+
+                result.Add(new Tuple<PointType, ushort>(param.PointType, (ushort)(param.StartAddress + i)), (ushort)(coilState ? 1 : 0));
+            }
+
+            return result;
         }
     }
 }

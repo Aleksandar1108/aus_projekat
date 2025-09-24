@@ -24,15 +24,56 @@ namespace Modbus.ModbusFunctions
         /// <inheritdoc />
         public override byte[] PackRequest()
         {
-            //TO DO: IMPLEMENT
-            throw new NotImplementedException();
+            var parameters = this.CommandParameters as ModbusReadCommandParameters;
+
+            List<byte> pdu = new List<byte>
+    {
+        (byte)ModbusFunctionCode.READ_DISCRETE_INPUTS,
+        (byte)(parameters.StartAddress >> 8),
+        (byte)(parameters.StartAddress & 0xFF),
+        (byte)(parameters.Quantity >> 8),
+        (byte)(parameters.Quantity & 0xFF)
+    };
+
+            List<byte> adu = new List<byte>
+    {
+        (byte)(parameters.TransactionId >> 8),
+        (byte)(parameters.TransactionId & 0xFF),
+        0x00, 0x00,
+        0x00, (byte)(pdu.Count + 1),
+        parameters.UnitId
+    };
+
+            adu.AddRange(pdu);
+            return adu.ToArray();
         }
 
         /// <inheritdoc />
         public override Dictionary<Tuple<PointType, ushort>, ushort> ParseResponse(byte[] response)
         {
-            //TO DO: IMPLEMENT
-            throw new NotImplementedException();
+            Dictionary<Tuple<PointType, ushort>, ushort> result = new Dictionary<Tuple<PointType, ushort>, ushort>();
+            var parameters = this.CommandParameters as ModbusReadCommandParameters;
+
+            byte functionCode = response[7];
+            if (functionCode != (byte)ModbusFunctionCode.READ_DISCRETE_INPUTS)
+                throw new Exception("Invalid function code in response!");
+
+            byte byteCount = response[8];
+            ushort startAddress = parameters.StartAddress;
+
+            for (int i = 0; i < byteCount; i++)
+            {
+                byte currentByte = response[9 + i];
+                for (int bit = 0; bit < 8; bit++)
+                {
+                    ushort value = (ushort)((currentByte >> bit) & 0x01);
+                    result.Add(new Tuple<PointType, ushort>(PointType.DIGITAL_INPUT, (ushort)(startAddress++)), value);
+                    if (startAddress >= parameters.StartAddress + parameters.Quantity)
+                        break;
+                }
+            }
+
+            return result;
         }
     }
 }
