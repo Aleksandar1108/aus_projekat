@@ -17,11 +17,6 @@ namespace ProcessingModule
         private AlarmProcessor alarmProcessor;
         private EGUConverter eguConverter;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ProcessingManager"/> class.
-        /// </summary>
-        /// <param name="storage">The point storage.</param>
-        /// <param name="functionExecutor">The function executor.</param>
         public ProcessingManager(IStorage storage, IFunctionExecutor functionExecutor)
         {
             this.storage = storage;
@@ -31,62 +26,100 @@ namespace ProcessingModule
             this.functionExecutor.UpdatePointEvent += CommandExecutor_UpdatePointEvent;
         }
 
-        /// <inheritdoc />
         public void ExecuteReadCommand(IConfigItem configItem, ushort transactionId, byte remoteUnitAddress, ushort startAddress, ushort numberOfPoints)
         {
-            ModbusReadCommandParameters p = new ModbusReadCommandParameters(6, (byte)GetReadFunctionCode(configItem.RegistryType), startAddress, numberOfPoints, transactionId, remoteUnitAddress);
+            ModbusReadCommandParameters p = new ModbusReadCommandParameters(
+                6,
+                (byte)GetReadFunctionCode(configItem.RegistryType),
+                startAddress,
+                numberOfPoints,
+                transactionId,
+                remoteUnitAddress
+            );
             IModbusFunction fn = FunctionFactory.CreateModbusFunction(p);
             this.functionExecutor.EnqueueCommand(fn);
         }
-        
-        /// <inheritdoc />
+
         public void ExecuteWriteCommand(IConfigItem configItem, ushort transactionId, byte remoteUnitAddress, ushort pointAddress, int value)
         {
-            if (configItem.RegistryType == PointType.ANALOG_OUTPUT)
+            if (configItem.RegistryType == PointType.DIGITAL_OUTPUT)
             {
+
+                ushort coilValue = (value == 0) ? (ushort)0 : (ushort)1;
+
+                var pts = storage.GetPoints(new List<PointIdentifier> {
+                    new PointIdentifier(PointType.DIGITAL_OUTPUT, pointAddress)
+                });
+                if (pts.Count > 0)
+                {
+                    var dp = pts[0] as IDigitalPoint;
+                    if (dp != null)
+                    {
+                        dp.State = (DState)coilValue;
+                        dp.RawValue = coilValue;
+                        dp.Timestamp = DateTime.Now;
+
+                        AlarmType alarm = alarmProcessor.GetAlarmForDigitalPoint(coilValue, configItem);
+                        dp.Alarm = alarm;
+                    }
+                }
+
+
+                ExecuteDigitalCommand(configItem, transactionId, remoteUnitAddress, pointAddress, coilValue);
+            }
+            else if (configItem.RegistryType == PointType.ANALOG_OUTPUT)
+            {
+                var pts = storage.GetPoints(new List<PointIdentifier> {
+                    new PointIdentifier(PointType.ANALOG_OUTPUT, pointAddress)
+                });
+                if (pts.Count > 0)
+                {
+                    var ap = pts[0] as IAnalogPoint;
+                    if (ap != null)
+                    {
+                        ap.RawValue = (ushort)value;
+                        double egu = eguConverter.ConvertToEGU(configItem.ScaleFactor, configItem.Deviation, (ushort)value);
+                        ap.EguValue = egu;
+                        ap.Timestamp = DateTime.Now;
+
+                        AlarmType alarm = alarmProcessor.GetAlarmForAnalogPoint(egu, configItem);
+                        ap.Alarm = alarm;
+                    }
+                }
+
                 ExecuteAnalogCommand(configItem, transactionId, remoteUnitAddress, pointAddress, value);
             }
-            else
-            {
-                ExecuteDigitalCommand(configItem, transactionId, remoteUnitAddress, pointAddress, value);
-            }
         }
 
-        /// <summary>
-        /// Executes a digital write command.
-        /// </summary>
-        /// <param name="configItem">The configuration item.</param>
-        /// <param name="transactionId">The transaction identifier.</param>
-        /// <param name="remoteUnitAddress">The remote unit address.</param>
-        /// <param name="pointAddress">The point address.</param>
-        /// <param name="value">The value.</param>
         private void ExecuteDigitalCommand(IConfigItem configItem, ushort transactionId, byte remoteUnitAddress, ushort pointAddress, int value)
         {
-            ModbusWriteCommandParameters p = new ModbusWriteCommandParameters(6, (byte)ModbusFunctionCode.WRITE_SINGLE_COIL, pointAddress, (ushort)value, transactionId, remoteUnitAddress);
+
+            ModbusWriteCommandParameters p = new ModbusWriteCommandParameters(
+                6,
+                (byte)ModbusFunctionCode.WRITE_SINGLE_COIL,
+                pointAddress,
+                (ushort)value,
+                transactionId,
+                remoteUnitAddress
+            );
             IModbusFunction fn = FunctionFactory.CreateModbusFunction(p);
             this.functionExecutor.EnqueueCommand(fn);
         }
 
-        /// <summary>
-        /// Executes an analog write command.
-        /// </summary>
-        /// <param name="configItem">The configuration item.</param>
-        /// <param name="transactionId">The transaction identifier.</param>
-        /// <param name="remoteUnitAddress">The remote unit address.</param>
-        /// <param name="pointAddress">The point address.</param>
-        /// <param name="value">The value.</param>
         private void ExecuteAnalogCommand(IConfigItem configItem, ushort transactionId, byte remoteUnitAddress, ushort pointAddress, int value)
         {
-            ModbusWriteCommandParameters p = new ModbusWriteCommandParameters(6, (byte)ModbusFunctionCode.WRITE_SINGLE_REGISTER, pointAddress, (ushort)value, transactionId, remoteUnitAddress);
+            ModbusWriteCommandParameters p = new ModbusWriteCommandParameters(
+                6,
+                (byte)ModbusFunctionCode.WRITE_SINGLE_REGISTER,
+                pointAddress,
+                (ushort)value,
+                transactionId,
+                remoteUnitAddress
+            );
             IModbusFunction fn = FunctionFactory.CreateModbusFunction(p);
             this.functionExecutor.EnqueueCommand(fn);
         }
 
-        /// <summary>
-        /// Gets the modbus function code for the point type.
-        /// </summary>
-        /// <param name="registryType">The register type.</param>
-        /// <returns>The modbus function code.</returns>
         private ModbusFunctionCode? GetReadFunctionCode(PointType registryType)
         {
             switch (registryType)
@@ -100,16 +133,10 @@ namespace ProcessingModule
             }
         }
 
-        /// <summary>
-        /// Method for handling received points.
-        /// </summary>
-        /// <param name="type">The point type.</param>
-        /// <param name="pointAddress">The point address.</param>
-        /// <param name="newValue">The new value.</param>
         private void CommandExecutor_UpdatePointEvent(PointType type, ushort pointAddress, ushort newValue)
         {
             List<IPoint> points = storage.GetPoints(new List<PointIdentifier>(1) { new PointIdentifier(type, pointAddress) });
-            
+
             if (type == PointType.ANALOG_INPUT || type == PointType.ANALOG_OUTPUT)
             {
                 ProcessAnalogPoint(points.First() as IAnalogPoint, newValue);
@@ -120,31 +147,30 @@ namespace ProcessingModule
             }
         }
 
-        /// <summary>
-        /// Processes a digital point.
-        /// </summary>
-        /// <param name="point">The digital point</param>
-        /// <param name="newValue">The new value.</param>
         private void ProcessDigitalPoint(IDigitalPoint point, ushort newValue)
         {
             point.RawValue = newValue;
             point.Timestamp = DateTime.Now;
             point.State = (DState)newValue;
 
+            AlarmType alarm = alarmProcessor.GetAlarmForDigitalPoint(newValue, point.ConfigItem);
+            point.Alarm = alarm;
         }
 
-        /// <summary>
-        /// Processes an analog point
-        /// </summary>
-        /// <param name="point">The analog point.</param>
-        /// <param name="newValue">The new value.</param>
         private void ProcessAnalogPoint(IAnalogPoint point, ushort newValue)
         {
             point.RawValue = newValue;
             point.Timestamp = DateTime.Now;
+
+            double egu = eguConverter.ConvertToEGU(point.ConfigItem.ScaleFactor, point.ConfigItem.Deviation, newValue);
+            if (egu > point.ConfigItem.EGU_Max) egu = point.ConfigItem.EGU_Max;
+            if (egu < point.ConfigItem.EGU_Min) egu = point.ConfigItem.EGU_Min;
+            point.EguValue = egu;
+
+            AlarmType alarm = alarmProcessor.GetAlarmForAnalogPoint(egu, point.ConfigItem);
+            point.Alarm = alarm;
         }
 
-        /// <inheritdoc />
         public void InitializePoint(PointType type, ushort pointAddress, ushort defaultValue)
         {
             List<IPoint> points = storage.GetPoints(new List<PointIdentifier>(1) { new PointIdentifier(type, pointAddress) });
