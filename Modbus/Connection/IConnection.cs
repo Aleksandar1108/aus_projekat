@@ -4,7 +4,7 @@
     /// Interface containing the logic for handling connections.
     /// </summary>
 	internal interface IConnection
-	{
+    {
         /// <summary>
         /// Connects the connection.
         /// </summary>
@@ -33,5 +33,5 @@
         /// </summary>
         /// <returns>True if connection is established.</returns>
 		bool CheckState();
-	}
+    }
 }
